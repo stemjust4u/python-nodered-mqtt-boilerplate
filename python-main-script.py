@@ -41,34 +41,56 @@ def setup_logging(log_dir, log_level=logging.INFO, mode=1):
 
 def on_connect(client, userdata, flags, rc):
     """ on connect callback verifies a connection established and subscribe to TOPICs"""
-    global MQTT_SUB_TOPIC
-    logging.info("attempting on_connect")
+    global MQTT_SUB_TOPIC, loggermqtt
+    loggermqtt.info("attempting on_connect")
     if rc==0:
         mqtt_client.connected = True
         for topic in MQTT_SUB_TOPIC:
             client.subscribe(topic)
-            logging.info("Subscribed to: {0}\n".format(topic))
-        logging.info("Successful Connection: {0}".format(str(rc)))
+            loggermqtt.info("Subscribed to: {0}\n".format(topic))
+        loggermqtt.info("Successful Connection: {0}".format(str(rc)))
     else:
         mqtt_client.failed_connection = True  # If rc != 0 then failed to connect. Set flag to stop mqtt loop
-        logging.info("Unsuccessful Connection - Code {0}".format(str(rc)))
+        loggermqtt.info("Unsuccessful Connection - Code {0}".format(str(rc)))
 
 def on_message(client, userdata, msg):
     """on message callback will receive messages from the server/broker. Must be subscribed to the topic in on_connect"""
-    logging.debug("Received: {0} with payload: {1}".format(msg.topic, str(msg.payload)))
+    global loggermqtt, loggermqtt_log_level, MQTT_REGEX, mqtt_dumm1, mqtt_dummy2
+    loggermqtt.debug("Received: {0} with payload: {1}".format(msg.topic, str(msg.payload)))
+    msgmatch = re.match(MQTT_REGEX, msg.topic)   # Check for match to subscribed topics
+    if msgmatch:
+        mqtt_payload = json.loads(str(msg.payload.decode("utf-8", "ignore"))) 
+        mqtt_topic = [msgmatch.group(0), msgmatch.group(1), msgmatch.group(2), type(mqtt_payload)] # breaks msg topic into groups - group/group1/group2
+        if mqtt_topic[2] == 'group2A':
+            mqtt_dummy1 = mqtt_payload
+        elif mqtt_topic[2] == 'group2B':
+            mqtt_dummy2 = mqtt_payload
+    # If Debugging will print the JSON incoming payload and unpack it
+    if loggermqtt_log_level == logging.DEBUG:
+        loggermqtt.debug("Topic grp0:{0} grp1:{1} grp2:{2}".format(msgmatch.group(0), msgmatch.group(1), msgmatch.group(2)))
+        mqtt_payload = json.loads(str(msg.payload.decode("utf-8", "ignore")))
+        loggermqtt.debug("Payload type:{0}".format(type(mqtt_payload)))
+        if isinstance(mqtt_payload, (str, bool, int, float)):
+            loggermqtt.debug(mqtt_payload)
+        elif isinstance(mqtt_payload, list):
+            for item in mqtt_payload:
+                loggermqtt.debug(item)
+        elif isinstance(mqtt_payload, dict):
+            for key, value in mqtt_payload.items():  
+                loggermqtt.debug("{0}:{1}".format(key, value))
 
 def on_publish(client, userdata, mid):
     """on publish will send data to client"""
     #Debugging. Will unpack the dictionary and then the converted JSON payload
-    #logging.debug("msg ID: " + str(mid)) 
-    #logging.debug("Publish: Unpack outgoing dictionary (Will convert dictionary->JSON)")
-    #for key, value in outgoingD.items():
-    #    logging.debug("{0}:{1}".format(key, value))
-    #logging.debug("Converted msg published on topic: {0} with JSON payload: {1}\n".format(MQTT_PUB_TOPIC1, json.dumps(outgoingD))) # Uncomment for debugging. Will print the JSON incoming msg
+    loggermqtt.debug("msg ID: " + str(mid)) 
+    loggermqtt.debug("Publish: Unpack outgoing dictionary (Will convert dictionary->JSON)")
+    for key, value in outgoingD.items():
+        loggermqtt.debug("{0}:{1}".format(key, value))
+    loggermqtt.debug("Converted msg published on topic: {0} with JSON payload: {1}\n".format(MQTT_PUB_TOPIC1, json.dumps(outgoingD))) # Uncomment for debugging. Will print the JSON incoming msg
     pass 
 
 def on_disconnect(client, userdata,rc=0):
-    logging.debug("DisConnected result code "+str(rc))
+    logger.info("DisConnected result code "+str(rc))
     mqtt_client.loop_stop()
 
 def mqtt_setup(IPaddress):
@@ -83,6 +105,12 @@ def mqtt_setup(IPaddress):
     # SUBSCRIBE: Specific MQTT_SUB_TOPICS created inside 'setup_device' function
     MQTT_SUB_TOPIC = []
     SUBLVL1 = 'nred2' + MQTT_CLIENT_ID
+    MQTT_REGEX = SUBLVL1 + '/([^/]+)/([^/]+)' # 'nred2pi/+' would also work but would not return groups
+                                              # () group capture. Useful for getting topic lvls in on_message
+                                              # [^/] match a char except /. Needed to get topic lvl2, lvl3 groups
+                                              # + will match one or more. Requiring at least 1 match forces a lvl1/lvl2/lvl3 topic structure
+                                              # * could also be used for last group and then a lvl1/lvl2 topic would also be matched
+
     # PUBLISH: Specific MQTT_PUB_TOPICS created at time of publishing using string.join
     MQTT_PUB_TOPIC = ['pi2nred/', '/' + MQTT_CLIENT_ID]
     # MQTT STRUCTURE - TOPIC/PAYLOAD
@@ -130,16 +158,6 @@ def mqtt_setup(IPaddress):
     # The NodeRed msg.payload then becomes an array containing [FIELDS, TAGS]
     # Final NodeRed payload: fields[key]  data is accessed with msg.payload[0].key
     #                        tags(topic levels) are access with msg.payload[1].lvlx (lvl1, lvl2, lvl3)
-    
-    MQTT_SUB_TOPIC = []
-
-    SUBLVL1 = 'nred2' + MQTT_CLIENT_ID
-
-    # lvl2: Specific MQTT_PUB_TOPICS created at time of publishing done using string.join (specifically item.join)
-    MQTT_PUB_TOPIC = ['pi2nred/', '/' + MQTT_CLIENT_ID]
-
-    mqtt_outgoingD = {}            # Container for data to be published via mqtt
-    device = []                    # mqtt lvl2 topic category and '.appended' in create functions
 
 def setup_device(device, lvl2, data_keys):
     global deviceD, SUBLVL1
@@ -167,7 +185,7 @@ def setup_device(device, lvl2, data_keys):
 def main():
     global deviceD      # Containers setup in 'create' functions and used for Publishing mqtt
     global MQTT_SERVER, MQTT_USER, MQTT_PASSWORD, MQTT_CLIENT_ID, mqtt_client, MQTT_PUB_TOPIC
-    global logger, logger_log_level
+    global logger, logger_log_level, loggermqtt, loggermqtt_log_level
 
     # Set next 3 variables for different logging options
     logger_log_level= logging.DEBUG # CRITICAL=logging off. DEBUG=get variables. INFO=status messages.
@@ -189,8 +207,17 @@ def main():
             logger = logging.getLogger(__name__)        # Root logger already exists so just linking logger to it
             logger.setLevel(logger_log_level)
     elif logger_setup == 1:                             # Using custom logger with RotatingFileHandler
-        logger = setup_logging(path.dirname(path.abspath(__file__)), logger_log_level, RFHmode ) # dir for creating logfile
+        logger = setup_logging(path.dirname(path.abspath(__file__)), logger_log_level, RFHmode) # dir for creating logfile
     logger.info(logger)
+
+    loggermqtt_log_level = logging.INFO
+    loggermqtt = logging.getLogger('MQTT')
+    loggermqtt.setLevel(loggermqtt_log_level)
+    #log_console_format = logging.Formatter("[%(levelname)s]: %(message)s")
+    #console_handler = logging.StreamHandler()
+    #console_handler.setLevel(logging.CRITICAL)
+    #console_handler.setFormatter(log_console_format)
+    #loggermqtt.addHandler(console_handler)
 
     MQTT_CLIENT_ID = 'pi' # Can make ID unique if multiple Pi's could be running similar devices (ie servos, ADC's) 
                           # Node red will need mqtt_in topic linked to unique MQTT_CLIENT_ID
@@ -222,12 +249,12 @@ def main():
     mqtt_client.on_disconnect = on_disconnect # Bind on disconnect
     mqtt_client.on_message = on_message       # Bind on message
     mqtt_client.on_publish = on_publish       # Bind on publish
-    logging.info("Connecting to: {0}".format(MQTT_SERVER))
+    logger.info("Connecting to: {0}".format(MQTT_SERVER))
     mqtt_client.connect(MQTT_SERVER, 1883)    # Connect to mqtt broker. This is a blocking function. Script will stop while connecting.
     mqtt_client.loop_start()                  # Start monitoring loop as asynchronous. Starts a new thread and will process incoming/outgoing messages.
     # Monitor if we're in process of connecting or if the connection failed
     while not mqtt_client.connected and not mqtt_client.failed_connection:
-        logging.info("Waiting")
+        logger.info("Waiting")
         sleep(1)
     if mqtt_client.failed_connection:         # If connection failed then stop the loop and main program. Use the rc code to trouble shoot
         mqtt_client.loop_stop()
@@ -245,9 +272,9 @@ def main():
                     mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_TOPIC), json.dumps(deviceD[device]['data']))  # publish voltage values
                 t0_sec = perf_counter()
     except KeyboardInterrupt:
-        logging.info("Pressed ctrl-C")
+        logger.info("Pressed ctrl-C")
     finally:
-        logging.info("Exiting")
+        logger.info("Exiting")
 
 if __name__ == "__main__":
     main()
