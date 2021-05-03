@@ -1,1 +1,1 @@
-from .Mmodule import RotaryEncoder
+from .Mmodule import device
