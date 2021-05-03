@@ -1,6 +1,6 @@
 import functools
 import time
-from time import perf_counter_ns
+from timer import Timer
 
 def timer(func):
     @functools.wraps(func)
@@ -32,7 +32,7 @@ def debug(func):
 3. The lists of positional and keyword arguments is joined together to one signature string with each argument separated by a comma.
 4. The return value is printed after the function is executed.
 '''
-
+@Timer(name="timer")
 def setup_device(device, lvl2, data_keys):
     global deviceD, SUBLVL1
     if deviceD.get(device) == None:
