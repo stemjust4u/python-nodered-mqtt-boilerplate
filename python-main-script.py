@@ -8,15 +8,25 @@ from logging.handlers import RotatingFileHandler
 
 class pcolor:
     ''' Add color to print statements '''
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
+    LBLUE = '\33[36m'   # Close to CYAN
     CYAN = '\033[96m'
+    BLUE = '\033[94m'
+    DBLUE = '\33[34m'
+    WOLB = '\33[46m'    # White On LightBlue
+    LPURPLE = '\033[95m'
+    PURPLE = '\33[35m'
+    WOP = '\33[45m'     # White On Purple
     GREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
+    DGREEN = '\33[32m'
+    WOG = '\33[42m'     # White On Green
+    YELLOW = '\033[93m'
+    YELLOW2 = '\33[33m'
+    RED = '\033[91m'
+    DRED = '\33[31m'
+    WOR = '\33[41m'     # White On Red
+    BOW = '\33[7m'      # Black On White
     BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+    ENDC = '\033[0m'
 
 class CustomFormatter(logging.Formatter):
     """ Custom logging format with color """
@@ -50,10 +60,12 @@ def setup_logging(log_dir, logger_type, logger_name=__name__, log_level=logging.
                 # log_level and mode will determine output
                     #log_level, RFHmode|  logger.x() | output
                     #------------------|-------------|-----------
-                    #      INFO, 1     |  info       | print only
+                    #      INFO, 1     |  info       | print
                     #      INFO, 2     |  info       | print+logfile
+                    #      INFO, 3     |  info       | logfile
                     #      DEBUG,1     |  info+debug | print only
                     #      DEBUG,2     |  info+debug | print+logfile
+                    #      DEBUG,3     |  info+debug | logfile
 
     if logger_type == 'basic':
         if len(logging.getLogger().handlers) == 0:       # Root logger does not already exist, will create it
@@ -64,16 +76,22 @@ def setup_logging(log_dir, logger_type, logger_name=__name__, log_level=logging.
     else:
         if mode == 1:
             logfile_log_level = logging.CRITICAL
+            console_log_level = log_level
         elif mode == 2:
-            logfile_log_level = logging.DEBUG
+            logfile_log_level = log_level
+            console_log_level = log_level
+        elif mode == 3:
+            logfile_log_level = log_level
+            console_log_level = logging.CRITICAL
 
         custom_logger = logging.getLogger(logger_name)
+        custom_logger.propagate = False
         custom_logger.setLevel(log_level)
         log_file_format = logging.Formatter("[%(levelname)s] - %(asctime)s - %(name)s - : %(message)s in %(pathname)s:%(lineno)d")
         #log_console_format = logging.Formatter("[%(levelname)s]: %(message)s") # Using CustomFormatter Class
 
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(log_level)
+        console_handler.setLevel(console_log_level)
         console_handler.setFormatter(CustomFormatter())
 
         log_file_handler = RotatingFileHandler('{}/debug.log'.format(log_dir), maxBytes=10**6, backupCount=5) # 1MB file
@@ -130,12 +148,7 @@ def on_message(client, userdata, msg):
 
 def on_publish(client, userdata, mid):
     """on publish will send data to client"""
-    #Debugging. Will unpack the dictionary and then the converted JSON payload
     mqtt_logger.debug("msg ID: " + str(mid)) 
-    mqtt_logger.debug("Publish: Unpack outgoing dictionary (Will convert dictionary->JSON)")
-    for key, value in outgoingD.items():
-        mqtt_logger.debug("{0}:{1}".format(key, value))
-    mqtt_logger.debug("Converted msg published on topic: {0} with JSON payload: {1}\n".format(MQTT_PUB_TOPIC1, json.dumps(outgoingD))) # Uncomment for debugging. Will print the JSON incoming msg
     pass 
 
 def on_disconnect(client, userdata,rc=0):
@@ -143,7 +156,7 @@ def on_disconnect(client, userdata,rc=0):
     mqtt_client.loop_stop()
 
 def mqtt_setup(IPaddress):
-    global MQTT_SERVER, MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD, MQTT_SUB_TOPIC, MQTT_PUB_TOPIC, SUBLVL1, MQTT_REGEX
+    global MQTT_SERVER, MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD, MQTT_SUB_TOPIC, MQTT_PUB_LVL1, MQTT_SUB_LVL1, MQTT_REGEX
     global mqtt_client
     home = str(Path.home())                       # Import mqtt and wifi info. Remove if hard coding in python script
     with open(path.join(home, "stem"),"r") as f:
@@ -151,17 +164,16 @@ def mqtt_setup(IPaddress):
     MQTT_SERVER = IPaddress                    # Replace with IP address of device running mqtt server/broker
     MQTT_USER = user_info[0]                   # Replace with your mqtt user ID
     MQTT_PASSWORD = user_info[1]               # Replace with your mqtt password
-    # SUBSCRIBE: Specific MQTT_SUB_TOPICS created inside 'setup_device' function
+    # Specific MQTT SUBSCRIBE/PUBLISH TOPICS created inside 'setup_device' function
     MQTT_SUB_TOPIC = []
-    SUBLVL1 = 'nred2' + MQTT_CLIENT_ID
-    MQTT_REGEX = SUBLVL1 + '/([^/]+)/([^/]+)' # 'nred2pi/+' would also work but would not return groups
+    MQTT_SUB_LVL1 = 'nred2' + MQTT_CLIENT_ID
+    MQTT_REGEX = MQTT_SUB_LVL1 + '/([^/]+)/([^/]+)' # 'nred2pi/+' would also work but would not return groups
                                               # () group capture. Useful for getting topic lvls in on_message
                                               # [^/] match a char except /. Needed to get topic lvl2, lvl3 groups
                                               # + will match one or more. Requiring at least 1 match forces a lvl1/lvl2/lvl3 topic structure
                                               # * could also be used for last group and then a lvl1/lvl2 topic would also be matched
+    MQTT_PUB_LVL1 = 'pi2nred/'
 
-    # PUBLISH: Specific MQTT_PUB_TOPICS created at time of publishing using string.join
-    MQTT_PUB_TOPIC = ['pi2nred/', '/' + MQTT_CLIENT_ID]
     # MQTT STRUCTURE - TOPIC/PAYLOAD
     # TOPIC levels --> lvl1/lvl2/lvl3
     # PAYLOAD contains the data (JSON string represinting python/js object with key:value is best format
@@ -208,13 +220,13 @@ def mqtt_setup(IPaddress):
     # Final NodeRed payload: fields[key]  data is accessed with msg.payload[0].key
     #                        tags(topic levels) are access with msg.payload[1].lvlx (lvl1, lvl2, lvl3)
 
-def setup_device(device, lvl2, data_keys):
-    global printcolor, deviceD, SUBLVL1, main_logger
+def setup_device(device, lvl2, publvl3, data_keys):
+    global printcolor, deviceD
     if deviceD.get(device) == None:
         deviceD[device] = {}
         deviceD[device]['data'] = {}
         deviceD[device]['lvl2'] = lvl2 # Sub/Pub lvl2 in topics. Does not have to be unique, can piggy-back on another device lvl2
-        topic = f"{SUBLVL1}/{deviceD[device]['lvl2']}ZCMD/+"
+        topic = f"{MQTT_SUB_LVL1}/{deviceD[device]['lvl2']}ZCMD/+"
         if topic not in MQTT_SUB_TOPIC:
             MQTT_SUB_TOPIC.append(topic)
             for key in data_keys:
@@ -225,32 +237,39 @@ def setup_device(device, lvl2, data_keys):
                     if deviceD[item]['data'].get(key) != None:
                         main_logger.warning(f"**DUPLICATE WARNING {device} and {item} are both publishing {key} on {topic}")
                 deviceD[device]['data'][key] = 0
+        deviceD[device]['pubtopic'] = MQTT_PUB_LVL1 + lvl2 + '/' + publvl3
         deviceD[device]['send'] = False
         printcolor = not printcolor # change color of every other print statement
         if printcolor: 
-            main_logger.info(f"{pcolor.BLUE}{device}{pcolor.ENDC} Subscribing to: {pcolor.BLUE}{topic}{pcolor.ENDC}")
-            main_logger.info(f"   JSON payload keys will be:{pcolor.BLUE}{*deviceD[device]['data'],}{pcolor.ENDC}")
+            main_logger.info(f"{pcolor.LBLUE}{device} Subscribing to: {topic}{pcolor.ENDC}")
+            main_logger.info(f"{pcolor.DBLUE}{device} Publishing  to: {deviceD[device]['pubtopic']}{pcolor.ENDC}")
+            main_logger.info(f"JSON payload keys will be:{pcolor.WOLB}{*deviceD[device]['data'],}{pcolor.ENDC}")
         else:
-            main_logger.info(f"{pcolor.GREEN}{device}{pcolor.ENDC} Subscribing to: {pcolor.GREEN}{topic}{pcolor.ENDC}")
-            main_logger.info(f"   JSON payload keys will be:{pcolor.GREEN}{*deviceD[device]['data'],}{pcolor.ENDC}")
+            main_logger.info(f"{pcolor.PURPLE}{device} Subscribing to: {topic}{pcolor.ENDC}")
+            main_logger.info(f"{pcolor.LPURPLE}{device} Publishing  to: {deviceD[device]['pubtopic']}{pcolor.ENDC}")
+            main_logger.info(f"JSON payload keys will be:{pcolor.WOP}{*deviceD[device]['data'],}{pcolor.ENDC}")
     else:
         main_logger.error(f"Device {device} already in use. Device name should be unique")
-        sys.exit(f"{pcolor.FAIL}Device {device} already in use. Device name should be unique{pcolor.ENDC}")
+        sys.exit(f"{pcolor.RED}Device {device} already in use. Device name should be unique{pcolor.ENDC}")
 
 def main():
     global deviceD, printcolor      # Containers setup in 'create' functions and used for Publishing mqtt
-    global MQTT_SERVER, MQTT_USER, MQTT_PASSWORD, MQTT_CLIENT_ID, mqtt_client, MQTT_PUB_TOPIC
+    global MQTT_SERVER, MQTT_USER, MQTT_PASSWORD, MQTT_CLIENT_ID, mqtt_client, MQTT_PUB_LVL1
     global _loggers, main_logger, mqtt_logger
 
     main_logger_level= logging.DEBUG # CRITICAL=logging off. DEBUG=get variables. INFO=status messages.
     main_logger_type = 'custom'       # 'basic' or 'custom' (with option for log files)
     RFHmode = 1 # log level and RFH mode will determine output for custom loggers
-                #log_level, mode   |  logger.x() | output
+                # log_level and mode will determine output
+                #log_level, RFHmode|  logger.x() | output
                 #------------------|-------------|-----------
-                #      INFO, 1     |  info       | print only
+                #      INFO, 1     |  info       | print
                 #      INFO, 2     |  info       | print+logfile
+                #      INFO, 3     |  info       | logfile
                 #      DEBUG,1     |  info+debug | print only
                 #      DEBUG,2     |  info+debug | print+logfile
+                #      DEBUG,3     |  info+debug | logfile
+    
     _loggers = [] # container to keep track of loggers created
     main_logger = setup_logging(path.dirname(path.abspath(__file__)), main_logger_type, log_level=main_logger_level, mode=RFHmode)
     mqtt_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'mqtt', log_level=logging.INFO, mode=1)
@@ -266,22 +285,23 @@ def main():
 
     #==== HARDWARE SETUP =====#
     rotaryEncoderSet = {}
-    rotenc_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'rotenc', log_level=logging.DEBUG, mode=1)
+    rotenc_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'rotenc', log_level=logging.DEBUG, mode=2)
 
     device = "rotEnc1"  # Device name should be unique, can not duplicate device ID
     lvl2 = 'rotencoder' # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
+    publvl3 = MQTT_CLIENT_ID + "" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
     data_keys = ['RotEnc1Ci', 'RotEnc1Bi'] # If topic lvl2 name repeats would likely want the data_keys to be unique
     clkPin, dtPin, button_rotenc = 17, 27, 24
-    setup_device(device, lvl2, data_keys)
+    setup_device(device, lvl2, publvl3, data_keys)
     rotaryEncoderSet[device] = rotaryencoder.RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, rotenc_logger)
 
-    ina219Set = {}
-    ina219_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'rotenc', log_level=logging.DEBUG, mode=1)
-
-    device = "ina219A"  # Device name should be unique, can not duplicate device ID
-    lvl2 = "ina219A"    # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
-    data_keys = ['Vbusf', 'IbusAf', 'PowerWf'] # If topic lvl2 name repeats would likely want the data_keys to be unique
-    setup_device(device, lvl2, data_keys)
+    ina219Set = {}   # ina219 library has an internal logger named ina219. name it something different.
+    ina219_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'ina219lgr', log_level=logging.DEBUG, mode=1)
+    device = "ina219A"  
+    lvl2 = "ina219A"
+    publvl3 = MQTT_CLIENT_ID + "Test1" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
+    data_keys = ['Vbusf', 'IbusAf', 'PowerWf']
+    setup_device(device, lvl2, publvl3, data_keys)
     ina219Set[device] = piina219.PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, mlogger=ina219_logger)
 
     print("\n")
@@ -319,12 +339,12 @@ def main():
             if (perf_counter() - t0_sec) > msginterval: # Get data on a time interval
                 for device, ina219 in ina219Set.items():
                     deviceD[device]['data'] = ina219.read()
-                    mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_TOPIC), json.dumps(deviceD[device]['data']))  # publish voltage values
+                    mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_LVL1), json.dumps(deviceD[device]['data']))  # publish voltage values
                 t0_sec = perf_counter()
             for device, rotenc in rotaryEncoderSet.items():
                 deviceD[device]['data'] = rotenc.runencoder()
                 if deviceD[device]['data'] is not None:
-                    mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_TOPIC), json.dumps(deviceD[device]['data']))
+                    mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_LVL1), json.dumps(deviceD[device]['data']))
     except KeyboardInterrupt:
         main_logger.info(f"{pcolor.WARNING}Exit with ctrl-C{pcolor.ENDC}")
     finally:
