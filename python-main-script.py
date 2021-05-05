@@ -1,62 +1,112 @@
 import sys, json, logging, re
+import RPi.GPIO as GPIO
 from time import sleep, perf_counter
 import paho.mqtt.client as mqtt
 from os import path
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-def setup_logging(log_dir, log_level=logging.INFO, mode=1):
-    # Create loggers
-    # INFO + mode 1  = info           print only
-    # INFO + mode 2  = info           print+logfile output
-    # DEBUG + mode 1 = info and debug print only
-    # DEBUG + mode 2 = info and debug print+logfile output
+class pcolor:
+    ''' Add color to print statements '''
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
-    if mode == 1:
-        logfile_log_level = logging.CRITICAL
-    elif mode == 2:
-        logfile_log_level = logging.DEBUG
+class CustomFormatter(logging.Formatter):
+    """ Custom logging format with color """
 
-    main_logger = logging.getLogger(__name__)
-    main_logger.setLevel(log_level)
-    log_file_format = logging.Formatter("[%(levelname)s] - %(asctime)s - %(name)s - : %(message)s in %(pathname)s:%(lineno)d")
-    log_console_format = logging.Formatter("[%(levelname)s]: %(message)s")
+    grey = "\x1b[38;21m"
+    green = "\x1b[32m"
+    yellow = "\x1b[33;21m"
+    red = "\x1b[31;21m"
+    bold_red = "\x1b[31;1m"
+    reset = "\x1b[0m"
+    format = "[%(levelname)s]: %(name)s - %(message)s"
 
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.CRITICAL)
-    console_handler.setFormatter(log_console_format)
+    FORMATS = {
+        logging.DEBUG: green + format + reset,
+        logging.INFO: grey + format + reset,
+        logging.WARNING: yellow + format + reset,
+        logging.ERROR: red + format + reset,
+        logging.CRITICAL: bold_red + format + reset
+    }
 
-    exp_file_handler = RotatingFileHandler('{}/exp_debug.log'.format(log_dir), maxBytes=10**6, backupCount=5) # 1MB file
-    exp_file_handler.setLevel(logfile_log_level)
-    exp_file_handler.setFormatter(log_file_format)
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
 
-    exp_errors_file_handler = RotatingFileHandler('{}/exp_error.log'.format(log_dir), maxBytes=10**6, backupCount=5)
-    exp_errors_file_handler.setLevel(logging.WARNING)
-    exp_errors_file_handler.setFormatter(log_file_format)
+def setup_logging(log_dir, logger_type, logger_name=__name__, log_level=logging.INFO, mode=1):
+    ''' Create basic or custom loggers with RotatingFileHandler '''
+    global _loggers
+    # logger_type = basic
+    # logger_type = custom with log file options below
+                # log_level and mode will determine output
+                    #log_level, RFHmode|  logger.x() | output
+                    #------------------|-------------|-----------
+                    #      INFO, 1     |  info       | print only
+                    #      INFO, 2     |  info       | print+logfile
+                    #      DEBUG,1     |  info+debug | print only
+                    #      DEBUG,2     |  info+debug | print+logfile
 
-    main_logger.addHandler(console_handler)
-    main_logger.addHandler(exp_file_handler)
-    main_logger.addHandler(exp_errors_file_handler)
-    return main_logger
+    if logger_type == 'basic':
+        if len(logging.getLogger().handlers) == 0:       # Root logger does not already exist, will create it
+            logging.basicConfig(level=log_level) # Create Root logger
+            custom_logger = logging.getLogger(logger_name)    # Set logger to root logging
+        else:
+            custom_logger = logging.getLogger(logger_name)   # Root logger already exists so just linking logger to it
+    else:
+        if mode == 1:
+            logfile_log_level = logging.CRITICAL
+        elif mode == 2:
+            logfile_log_level = logging.DEBUG
 
+        custom_logger = logging.getLogger(logger_name)
+        custom_logger.setLevel(log_level)
+        log_file_format = logging.Formatter("[%(levelname)s] - %(asctime)s - %(name)s - : %(message)s in %(pathname)s:%(lineno)d")
+        #log_console_format = logging.Formatter("[%(levelname)s]: %(message)s") # Using CustomFormatter Class
+
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(log_level)
+        console_handler.setFormatter(CustomFormatter())
+
+        log_file_handler = RotatingFileHandler('{}/debug.log'.format(log_dir), maxBytes=10**6, backupCount=5) # 1MB file
+        log_file_handler.setLevel(logfile_log_level)
+        log_file_handler.setFormatter(log_file_format)
+
+        log_errors_file_handler = RotatingFileHandler('{}/error.log'.format(log_dir), maxBytes=10**6, backupCount=5)
+        log_errors_file_handler.setLevel(logging.WARNING)
+        log_errors_file_handler.setFormatter(log_file_format)
+
+        custom_logger.addHandler(console_handler)
+        custom_logger.addHandler(log_file_handler)
+        custom_logger.addHandler(log_errors_file_handler)
+    if custom_logger not in _loggers: _loggers.append(custom_logger)
+    return custom_logger
+                
 def on_connect(client, userdata, flags, rc):
     """ on connect callback verifies a connection established and subscribe to TOPICs"""
-    global MQTT_SUB_TOPIC, loggermqtt
-    loggermqtt.info("attempting on_connect")
+    main_logger.info("attempting on_connect")
     if rc==0:
         mqtt_client.connected = True
         for topic in MQTT_SUB_TOPIC:
             client.subscribe(topic)
-            loggermqtt.info("Subscribed to: {0}\n".format(topic))
-        loggermqtt.info("Successful Connection: {0}".format(str(rc)))
+            main_logger.info("Subscribed to: {0}\n".format(topic))
+        main_logger.info("Successful Connection: {0}".format(str(rc)))
     else:
         mqtt_client.failed_connection = True  # If rc != 0 then failed to connect. Set flag to stop mqtt loop
-        loggermqtt.info("Unsuccessful Connection - Code {0}".format(str(rc)))
+        main_logger.info("Unsuccessful Connection - Code {0}".format(str(rc)))
 
 def on_message(client, userdata, msg):
     """on message callback will receive messages from the server/broker. Must be subscribed to the topic in on_connect"""
-    global loggermqtt, loggermqtt_log_level, MQTT_REGEX, mqtt_dumm1, mqtt_dummy2
-    loggermqtt.debug("Received: {0} with payload: {1}".format(msg.topic, str(msg.payload)))
+    global MQTT_REGEX, mqtt_dummy1, mqtt_dummy2
+    mqtt_logger.debug("Received: {0} with payload: {1}".format(msg.topic, str(msg.payload)))
     msgmatch = re.match(MQTT_REGEX, msg.topic)   # Check for match to subscribed topics
     if msgmatch:
         mqtt_payload = json.loads(str(msg.payload.decode("utf-8", "ignore"))) 
@@ -66,31 +116,30 @@ def on_message(client, userdata, msg):
         elif mqtt_topic[2] == 'group2B':
             mqtt_dummy2 = mqtt_payload
     # If Debugging will print the JSON incoming payload and unpack it
-    if loggermqtt_log_level == logging.DEBUG:
-        loggermqtt.debug("Topic grp0:{0} grp1:{1} grp2:{2}".format(msgmatch.group(0), msgmatch.group(1), msgmatch.group(2)))
+    if mqtt_logger.getEffectiveLevel() == 10:
+        mqtt_logger.debug("Topic grp0:{0} grp1:{1} grp2:{2}".format(msgmatch.group(0), msgmatch.group(1), msgmatch.group(2)))
         mqtt_payload = json.loads(str(msg.payload.decode("utf-8", "ignore")))
-        loggermqtt.debug("Payload type:{0}".format(type(mqtt_payload)))
+        mqtt_logger.debug("Payload type:{0}".format(type(mqtt_payload)))
         if isinstance(mqtt_payload, (str, bool, int, float)):
-            loggermqtt.debug(mqtt_payload)
+            mqtt_logger.debug(mqtt_payload)
         elif isinstance(mqtt_payload, list):
-            for item in mqtt_payload:
-                loggermqtt.debug(item)
+            mqtt_logger.debug(mqtt_payload)
         elif isinstance(mqtt_payload, dict):
             for key, value in mqtt_payload.items():  
-                loggermqtt.debug("{0}:{1}".format(key, value))
+                mqtt_logger.debug("{0}:{1}".format(key, value))
 
 def on_publish(client, userdata, mid):
     """on publish will send data to client"""
     #Debugging. Will unpack the dictionary and then the converted JSON payload
-    loggermqtt.debug("msg ID: " + str(mid)) 
-    loggermqtt.debug("Publish: Unpack outgoing dictionary (Will convert dictionary->JSON)")
+    mqtt_logger.debug("msg ID: " + str(mid)) 
+    mqtt_logger.debug("Publish: Unpack outgoing dictionary (Will convert dictionary->JSON)")
     for key, value in outgoingD.items():
-        loggermqtt.debug("{0}:{1}".format(key, value))
-    loggermqtt.debug("Converted msg published on topic: {0} with JSON payload: {1}\n".format(MQTT_PUB_TOPIC1, json.dumps(outgoingD))) # Uncomment for debugging. Will print the JSON incoming msg
+        mqtt_logger.debug("{0}:{1}".format(key, value))
+    mqtt_logger.debug("Converted msg published on topic: {0} with JSON payload: {1}\n".format(MQTT_PUB_TOPIC1, json.dumps(outgoingD))) # Uncomment for debugging. Will print the JSON incoming msg
     pass 
 
 def on_disconnect(client, userdata,rc=0):
-    logger.info("DisConnected result code "+str(rc))
+    main_logger.info("DisConnected result code "+str(rc))
     mqtt_client.loop_stop()
 
 def mqtt_setup(IPaddress):
@@ -160,7 +209,7 @@ def mqtt_setup(IPaddress):
     #                        tags(topic levels) are access with msg.payload[1].lvlx (lvl1, lvl2, lvl3)
 
 def setup_device(device, lvl2, data_keys):
-    global deviceD, SUBLVL1
+    global printcolor, deviceD, SUBLVL1, main_logger
     if deviceD.get(device) == None:
         deviceD[device] = {}
         deviceD[device]['data'] = {}
@@ -174,69 +223,70 @@ def setup_device(device, lvl2, data_keys):
             for key in data_keys:
                 for item in deviceD:
                     if deviceD[item]['data'].get(key) != None:
-                        print(f'**DUPLICATE WARNING {device} and {item} are both publishing {key} on {topic}')
+                        main_logger.warning(f"**DUPLICATE WARNING {device} and {item} are both publishing {key} on {topic}")
                 deviceD[device]['data'][key] = 0
         deviceD[device]['send'] = False
-        print('\n{0} Subscribing to: {1}'.format(device, topic))
-        print('   JSON payload keys will be:{0}'.format([*deviceD[device]['data']]))
+        printcolor = not printcolor # change color of every other print statement
+        if printcolor: 
+            main_logger.info(f"{pcolor.BLUE}{device}{pcolor.ENDC} Subscribing to: {pcolor.BLUE}{topic}{pcolor.ENDC}")
+            main_logger.info(f"   JSON payload keys will be:{pcolor.BLUE}{*deviceD[device]['data'],}{pcolor.ENDC}")
+        else:
+            main_logger.info(f"{pcolor.GREEN}{device}{pcolor.ENDC} Subscribing to: {pcolor.GREEN}{topic}{pcolor.ENDC}")
+            main_logger.info(f"   JSON payload keys will be:{pcolor.GREEN}{*deviceD[device]['data'],}{pcolor.ENDC}")
     else:
-        sys.exit(f'Device {device} already in use. Device name should be unique')
+        main_logger.error(f"Device {device} already in use. Device name should be unique")
+        sys.exit(f"{pcolor.FAIL}Device {device} already in use. Device name should be unique{pcolor.ENDC}")
 
 def main():
-    global deviceD      # Containers setup in 'create' functions and used for Publishing mqtt
+    global deviceD, printcolor      # Containers setup in 'create' functions and used for Publishing mqtt
     global MQTT_SERVER, MQTT_USER, MQTT_PASSWORD, MQTT_CLIENT_ID, mqtt_client, MQTT_PUB_TOPIC
-    global logger, logger_log_level, loggermqtt, loggermqtt_log_level
+    global _loggers, main_logger, mqtt_logger
 
-    # Set next 3 variables for different logging options
-    logger_log_level= logging.DEBUG # CRITICAL=logging off. DEBUG=get variables. INFO=status messages.
-    logger_setup = 1  # 0 for basicConfig, 1 for custom logger with RotatingFileHandler (RFH)
-    RFHmode = 2 # If logger_setup ==1 (RotatingFileHandler) then access to modes below
-                #Arguments
-                #log_level, RFHmode|  logger.x() | output
+    main_logger_level= logging.DEBUG # CRITICAL=logging off. DEBUG=get variables. INFO=status messages.
+    main_logger_type = 'custom'       # 'basic' or 'custom' (with option for log files)
+    RFHmode = 1 # log level and RFH mode will determine output for custom loggers
+                #log_level, mode   |  logger.x() | output
                 #------------------|-------------|-----------
                 #      INFO, 1     |  info       | print only
                 #      INFO, 2     |  info       | print+logfile
                 #      DEBUG,1     |  info+debug | print only
                 #      DEBUG,2     |  info+debug | print+logfile
-    if logger_setup == 0:
-        if len(logging.getLogger().handlers) == 0:      # Root logger does not already exist, will create it
-            logging.basicConfig(level=logger_log_level) # Create Root logger
-            logger = logging.getLogger(__name__)        # Set logger to root logging
-            logger.setLevel(logger_log_level)
-        else:
-            logger = logging.getLogger(__name__)        # Root logger already exists so just linking logger to it
-            logger.setLevel(logger_log_level)
-    elif logger_setup == 1:                             # Using custom logger with RotatingFileHandler
-        logger = setup_logging(path.dirname(path.abspath(__file__)), logger_log_level, RFHmode) # dir for creating logfile
-    logger.info(logger)
-
-    loggermqtt_log_level = logging.INFO
-    loggermqtt = logging.getLogger('MQTT')
-    loggermqtt.setLevel(loggermqtt_log_level)
-    #log_console_format = logging.Formatter("[%(levelname)s]: %(message)s")
-    #console_handler = logging.StreamHandler()
-    #console_handler.setLevel(logging.CRITICAL)
-    #console_handler.setFormatter(log_console_format)
-    #loggermqtt.addHandler(console_handler)
-
+    _loggers = [] # container to keep track of loggers created
+    main_logger = setup_logging(path.dirname(path.abspath(__file__)), main_logger_type, log_level=main_logger_level, mode=RFHmode)
+    mqtt_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'mqtt', log_level=logging.INFO, mode=1)
+    
+    # MQTT structure: lvl1 = from-to     (ie Pi-2-NodeRed shortened to pi2nred)
+    #                 lvl2 = device type (ie servoZCMD, stepperZCMD, adc)
+    #                 lvl3 = free form   (ie controls, servo IDs, etc)
     MQTT_CLIENT_ID = 'pi' # Can make ID unique if multiple Pi's could be running similar devices (ie servos, ADC's) 
-                          # Node red will need mqtt_in topic linked to unique MQTT_CLIENT_ID
-    mqtt_setup('10.0.0.115')
+                          # Node red will need to be linked to unique MQTT_CLIENT_ID
+    mqtt_setup('10.0.0.115') # Pass IP address
     
     deviceD = {}  # Primary container for storing all devices, topics, and data
-                  # Device name should be unique, can not duplicate device ID
-                  # Topic lvl2 name can be a duplicate, meaning multipple devices publishing data on the same topic
-                  # If topic lvl2 name repeats would likely want the data_keys to be unique
-    
-    ina219Set = {}
 
-    device = "ina219A"  
-    lvl2 = "ina219A"
-    data_keys = ['Vbusf', 'IbusAf', 'PowerWf']
+    #==== HARDWARE SETUP =====#
+    rotaryEncoderSet = {}
+    rotenc_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'rotenc', log_level=logging.DEBUG, mode=1)
+
+    device = "rotEnc1"  # Device name should be unique, can not duplicate device ID
+    lvl2 = 'rotencoder' # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
+    data_keys = ['RotEnc1Ci', 'RotEnc1Bi'] # If topic lvl2 name repeats would likely want the data_keys to be unique
+    clkPin, dtPin, button_rotenc = 17, 27, 24
     setup_device(device, lvl2, data_keys)
-    ina219Set[device] = piina219.PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, mlogger=logger, mlog_level=logger_log_level)
+    rotaryEncoderSet[device] = rotaryencoder.RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, rotenc_logger)
 
-    logger.info("\n")
+    ina219Set = {}
+    ina219_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'rotenc', log_level=logging.DEBUG, mode=1)
+
+    device = "ina219A"  # Device name should be unique, can not duplicate device ID
+    lvl2 = "ina219A"    # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
+    data_keys = ['Vbusf', 'IbusAf', 'PowerWf'] # If topic lvl2 name repeats would likely want the data_keys to be unique
+    setup_device(device, lvl2, data_keys)
+    ina219Set[device] = piina219.PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, mlogger=ina219_logger)
+
+    print("\n")
+    for logger in _loggers:
+        main_logger.info('{0} is set at level: {1}'.format(logger, logger.getEffectiveLevel()))
 
     #==== START/BIND MQTT FUNCTIONS ====#
     # Create a couple flags to handle a failed attempt at connecting. If user/password is wrong we want to stop the loop.
@@ -249,12 +299,12 @@ def main():
     mqtt_client.on_disconnect = on_disconnect # Bind on disconnect
     mqtt_client.on_message = on_message       # Bind on message
     mqtt_client.on_publish = on_publish       # Bind on publish
-    logger.info("Connecting to: {0}".format(MQTT_SERVER))
+    main_logger.info("Connecting to: {0}".format(MQTT_SERVER))
     mqtt_client.connect(MQTT_SERVER, 1883)    # Connect to mqtt broker. This is a blocking function. Script will stop while connecting.
     mqtt_client.loop_start()                  # Start monitoring loop as asynchronous. Starts a new thread and will process incoming/outgoing messages.
     # Monitor if we're in process of connecting or if the connection failed
     while not mqtt_client.connected and not mqtt_client.failed_connection:
-        logger.info("Waiting")
+        main_logger.info("Waiting")
         sleep(1)
     if mqtt_client.failed_connection:         # If connection failed then stop the loop and main program. Use the rc code to trouble shoot
         mqtt_client.loop_stop()
@@ -271,10 +321,15 @@ def main():
                     deviceD[device]['data'] = ina219.read()
                     mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_TOPIC), json.dumps(deviceD[device]['data']))  # publish voltage values
                 t0_sec = perf_counter()
+            for device, rotenc in rotaryEncoderSet.items():
+                deviceD[device]['data'] = rotenc.runencoder()
+                if deviceD[device]['data'] is not None:
+                    mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_TOPIC), json.dumps(deviceD[device]['data']))
     except KeyboardInterrupt:
-        logger.info("Pressed ctrl-C")
+        main_logger.info(f"{pcolor.WARNING}Exit with ctrl-C{pcolor.ENDC}")
     finally:
-        logger.info("Exiting")
+        GPIO.cleanup()
+        main_logger.info(f"{pcolor.CYAN}GPIO cleaned up{pcolor.ENDC}")
 
 if __name__ == "__main__":
     main()

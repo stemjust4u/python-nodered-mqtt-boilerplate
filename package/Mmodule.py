@@ -4,20 +4,17 @@ import RPi.GPIO as GPIO
 
 class device:
 
-    def __init__(self, key1='Vf', key2='If', address=0x40, mlogger=None, mlog_level=logging.INFO): 
+    def __init__(self, key1='Vf', key2='If', address=0x40, mlogger=None): 
         self.key1 = key1
         self.key2 = key2
         self.address = address
-        if mlogger is not None:     # Custom logger has priority
+        if mlogger is not None:         # Use logger passed as argument
             self.logger = mlogger
-        elif len(logging.getLogger().handlers) == 0: # Root logger does not exist and no custom logger passed
-            logging.basicConfig(level=mlog_level)  # Create Root logger
-            self.logger = logging.getLogger(__name__)
-            self.logger.setLevel(mlog_level)
-        else:
-            self.logger = logging.getLogger(__name__)
-            self.logger.setLevel(mlog_level)
-            
+        elif len(logging.getLogger().handlers) == 0:     # Root logger does not exist and no custom logger passed
+            logging.basicConfig(level=logging.INFO)  # Create root logger
+            self.logger = logging.getLogger(__name__)# Create from root logger
+        else:                                            # Root logger already exists and no custom logger passed
+            self.logger = logging.getLogger(__name__)    # Create from root logger       
         self.logger.info(f'device at {address} setup')
         self.logger.info(self.ina219)
 
